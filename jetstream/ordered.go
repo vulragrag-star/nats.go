@@ -104,8 +104,11 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	opts = append(opts, consumeReconnectNotify())
 	// innerOpts returns the options for the inner pull subscription of the
 	// current serial. Lock should be held when calling it.
+	// PullHeartbeat propagates the ordered default (5s) — the inner
+	// pullConsumer.Consume re-parses opts with ordered=false and would
+	// otherwise use Expires/2 (15s). See #2181.
 	innerOpts := func() []PullConsumeOpt {
-		o := append(slices.Clip(opts), ConsumeErrHandler(c.errHandler(c.serial)))
+		o := append(slices.Clip(opts), ConsumeErrHandler(c.errHandler(c.serial)), PullHeartbeat(consumeOpts.Heartbeat))
 		if c.stopAfter > 0 {
 			o = append(o, StopAfter(c.stopAfter-c.deliveredMessages))
 		}
@@ -257,7 +260,10 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	}
 	opts = append(opts,
 		WithMessagesErrOnMissingHeartbeat(true),
-		messagesReconnectNotify())
+		messagesReconnectNotify(),
+		// Propagate ordered heartbeat default to the inner pull consumer
+		// (re-parses with ordered=false). See #2181.
+		PullHeartbeat(consumeOpts.Heartbeat))
 	c.stopAfter = max(consumeOpts.StopAfter, 0)
 	c.deliveredMessages = 0
 	c.userErrHandler = consumeOpts.ErrHandler
