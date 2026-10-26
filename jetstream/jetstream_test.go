@@ -45,7 +45,7 @@ func TestJetStreamReconnectErrorCallback(t *testing.T) {
 			}
 			called <- struct{}{}
 		}
-		go js.resetPendingAcksOnReconnect()
+		go js.resetPendingAcksOnReconnect(js.publisher.connStatusCh)
 		defer func() {
 			close(js.publisher.connStatusCh)
 			synctest.Wait()

@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -1951,6 +1953,45 @@ func TestJetStreamCleanupPublisher(t *testing.T) {
 
 			if numSubs != nc.NumSubscriptions() {
 				t.Fatalf("Expected subscriptions to be back to original count")
+			}
+		})
+	})
+
+	t.Run("cleanup right after first publish does not leak the reconnect watcher", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			if _, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "TEST", Subjects: []string{"FOO"}}); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			watchers := func() int {
+				buf := make([]byte, 1<<20)
+				for {
+					n := runtime.Stack(buf, true)
+					if n < len(buf) {
+						return strings.Count(string(buf[:n]), "resetPendingAcksOnReconnect")
+					}
+					buf = make([]byte, 2*len(buf))
+				}
+			}
+			before := watchers()
+
+			for range 50 {
+				js, err := jetstream.New(nc)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if _, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				js.CleanupPublisher()
+			}
+
+			deadline := time.Now().Add(2 * time.Second)
+			for watchers() > before {
+				if time.Now().After(deadline) {
+					t.Fatalf("Expected no reconnect watchers left after CleanupPublisher, got %d", watchers()-before)
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
 		})
 	})
